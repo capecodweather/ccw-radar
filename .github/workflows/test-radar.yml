@@ -1,0 +1,59 @@
+name: Test radar plot (KBOX)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  radar-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install numpy matplotlib arm_pyart
+
+      - name: Download one KBOX Level II file
+        run: |
+          curl -L -o kbox.gz \
+            https://unidata-nexrad-level2.s3.amazonaws.com/2025/12/27/KBOX/KBOX20251227_144127_V06.gz
+
+      - name: Plot reflectivity
+        run: |
+          python << 'EOF'
+          import pyart
+          import matplotlib.pyplot as plt
+          import numpy as np
+
+          radar = pyart.io.read_nexrad_archive("kbox.gz")
+
+          sweep = 0
+          refl = radar.fields["reflectivity"]["data"][radar.get_slice(sweep)]
+          az = np.deg2rad(radar.azimuth["data"][radar.get_slice(sweep)])
+          r = radar.range["data"] / 1000.0
+
+          x = np.outer(np.sin(az), r)
+          y = np.outer(np.cos(az), r)
+
+          plt.figure(figsize=(6,6))
+          plt.pcolormesh(x, y, refl, cmap="pyart_NWSRef", shading="auto")
+          plt.axis("equal")
+          plt.axis("off")
+          plt.title("KBOX Reflectivity (test)")
+          plt.savefig("kbox_test.png", dpi=150, bbox_inches="tight")
+          plt.close()
+          EOF
+
+      - name: Upload image as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kbox-test-image
+          path: kbox_test.png
