@@ -56,13 +56,13 @@ jobs:
           y = np.outer(np.cos(az), r)
 
           # Plot
-          plt.figure(figsize=(6, 6))
+          plt.figure(figsize=(12, 12))
           plt.pcolormesh(x, y, refl, cmap="NWSRef", shading="auto")
           plt.axis("equal")
           plt.axis("off")
           plt.title("KBOX Reflectivity (KBOX20251227_153729_V06)")
 
-          plt.savefig("kbox_test.png", dpi=150, bbox_inches="tight")
+          plt.savefig("kbox_test.png", dpi=100, bbox_inches="tight")
           plt.close()
 
           print("Saved kbox_test.png")
