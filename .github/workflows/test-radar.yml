@@ -1,4 +1,4 @@
-name: Test radar plot (Py-ART)
+name: Test radar plot (KBOX fixed file)
 
 on:
   workflow_dispatch: {}
@@ -8,69 +8,66 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout repository (required by GitHub Actions)
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Step 2: Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # Step 3: Install required Python packages
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install numpy matplotlib arm_pyart
 
-      # Step 4: Download a KNOWN-GOOD NEXRAD Level II file (used by Py-ART examples)
-      - name: Download test NEXRAD file
+      - name: Download KBOX Level II file (fixed URL)
         run: |
-          curl -L -o radar.gz \
+          curl -L -o kbox \
             https://unidata-nexrad-level2.s3.amazonaws.com/2025/12/27/KBOX/KBOX20251227_153729_V06
 
-      # Step 5: Plot reflectivity using Py-ART (lightweight Cartesian plot)
-      - name: Plot reflectivity
+          echo "Downloaded bytes:"
+          wc -c kbox
+
+          echo "First 16 bytes (should NOT look like HTML/XML):"
+          head -c 16 kbox | xxd -g 1
+
+      - name: Plot reflectivity (lowest tilt)
         run: |
           python << 'EOF'
           import pyart
           import numpy as np
           import matplotlib.pyplot as plt
 
-          # Read radar file
-          radar = pyart.io.read_nexrad_archive("radar.gz")
+          # Read the Level II file
+          radar = pyart.io.read_nexrad_archive("kbox")
 
-          # Use lowest elevation sweep
+          # Lowest sweep
           sweep = 0
           sweep_slice = radar.get_slice(sweep)
 
-          # Extract data
           refl = radar.fields["reflectivity"]["data"][sweep_slice]
           az = np.deg2rad(radar.azimuth["data"][sweep_slice])
           r = radar.range["data"] / 1000.0  # km
 
-          # Cartesian conversion (FAST)
+          # Fast Cartesian conversion
           x = np.outer(np.sin(az), r)
           y = np.outer(np.cos(az), r)
 
-          # Plot
           plt.figure(figsize=(6, 6))
           plt.pcolormesh(x, y, refl, cmap="pyart_NWSRef", shading="auto")
           plt.axis("equal")
           plt.axis("off")
-          plt.title("Test NEXRAD Reflectivity (Py-ART)")
+          plt.title("KBOX Reflectivity (KBOX20251227_153729_V06)")
 
-          # Save image
-          plt.savefig("radar_test.png", dpi=150, bbox_inches="tight")
+          plt.savefig("kbox_test.png", dpi=150, bbox_inches="tight")
           plt.close()
 
-          print("Radar plot created successfully")
+          print("Saved kbox_test.png")
           EOF
 
-      # Step 6: Upload image as a downloadable artifact
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: radar-test-image
-          path: radar_test.png
+          name: kbox-test-image
+          path: kbox_test.png
