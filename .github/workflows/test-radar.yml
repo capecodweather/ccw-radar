@@ -28,7 +28,7 @@ jobs:
       - name: Download test NEXRAD file
         run: |
           curl -L -o radar.gz \
-            https://github.com/ARM-DOE/pyart-data/raw/master/example_nexrad_data/KTLX20130520_201643_V06.gz
+            https://unidata-nexrad-level2.s3.amazonaws.com/2025/12/27/KBOX/KBOX20251227_153729_V06
 
       # Step 5: Plot reflectivity using Py-ART (lightweight Cartesian plot)
       - name: Plot reflectivity
