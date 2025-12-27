@@ -29,7 +29,7 @@ jobs:
           echo "Downloaded bytes:"
           wc -c kbox
 
-          echo "First 16 bytes (should NOT look like HTML/XML):"
+          echo "First 16 bytes (debug):"
           head -c 16 kbox | xxd -g 1
 
       - name: Plot reflectivity (lowest tilt)
@@ -42,10 +42,11 @@ jobs:
           # Read the Level II file
           radar = pyart.io.read_nexrad_archive("kbox")
 
-          # Lowest sweep
+          # Lowest elevation sweep
           sweep = 0
           sweep_slice = radar.get_slice(sweep)
 
+          # Extract data
           refl = radar.fields["reflectivity"]["data"][sweep_slice]
           az = np.deg2rad(radar.azimuth["data"][sweep_slice])
           r = radar.range["data"] / 1000.0  # km
@@ -54,8 +55,9 @@ jobs:
           x = np.outer(np.sin(az), r)
           y = np.outer(np.cos(az), r)
 
+          # Plot
           plt.figure(figsize=(6, 6))
-          plt.pcolormesh(x, y, refl, cmap="pyart_NWSRef", shading="auto")
+          plt.pcolormesh(x, y, refl, cmap="NWSRef", shading="auto")
           plt.axis("equal")
           plt.axis("off")
           plt.title("KBOX Reflectivity (KBOX20251227_153729_V06)")
