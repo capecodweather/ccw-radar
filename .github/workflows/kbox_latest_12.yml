@@ -32,14 +32,14 @@ jobs:
           from pathlib import Path
           from datetime import datetime, timedelta
           from PIL import Image
-          from mpl_toolkits.axes_grid1 import make_axes_locatable
 
           # ---------------- CONFIG ---------------- #
           RADAR = "KBOX"
           BASE_URL = "https://unidata-nexrad-level2.s3.amazonaws.com"
           MAX_FRAMES = 12
 
-          IMAGE_PX = 1600
+          IMAGE_PX = 1600          # radar panel size
+          COLORBAR_PX = 120        # reserved space
           DPI = 100
           MAX_RANGE_KM = 230.0
 
@@ -52,7 +52,6 @@ jobs:
           OVERLAY_PATH = Path("overlays/sne_states.png")
           # ---------------------------------------- #
 
-          # Load and upscale overlay (lossless)
           overlay = Image.open(OVERLAY_PATH).convert("RGBA")
           overlay = overlay.resize((IMAGE_PX, IMAGE_PX), Image.LANCZOS)
 
@@ -91,10 +90,6 @@ jobs:
 
           latest = sorted(keys)[-MAX_FRAMES:]
 
-          print("Rendering frames:")
-          for k in latest:
-              print(" ", k)
-
           for i, key in enumerate(latest):
               url = f"{BASE_URL}/{key}"
               local_file = OUT_DIR / f"scan_{i:02d}"
@@ -115,10 +110,27 @@ jobs:
               x = np.outer(np.sin(az), r_km)
               y = np.outer(np.cos(az), r_km)
 
-              fig, ax = plt.subplots(
-                  figsize=(IMAGE_PX / DPI, IMAGE_PX / DPI),
+              # -------- FIGURE LAYOUT --------
+              total_width = IMAGE_PX + COLORBAR_PX
+              fig = plt.figure(
+                  figsize=(total_width / DPI, IMAGE_PX / DPI),
                   dpi=DPI
               )
+
+              ax = fig.add_axes([
+                  0.0,
+                  0.0,
+                  IMAGE_PX / total_width,
+                  1.0
+              ])
+
+              cax = fig.add_axes([
+                  IMAGE_PX / total_width + 0.02,
+                  0.1,
+                  0.04,
+                  0.8
+              ])
+              # --------------------------------
 
               mesh = ax.pcolormesh(
                   x, y, refl,
@@ -142,21 +154,15 @@ jobs:
               ax.set_aspect("equal")
               ax.axis("off")
 
-              # ----- dBZ COLORBAR -----
-              divider = make_axes_locatable(ax)
-              cax = divider.append_axes("right", size="3%", pad=0.08)
-              cb = plt.colorbar(mesh, cax=cax)
+              cb = fig.colorbar(mesh, cax=cax)
               cb.set_label("Reflectivity (dBZ)")
-              cb.ax.tick_params(labelsize=10)
-              # ------------------------
+              cb.ax.tick_params(labelsize=11)
 
               out_png = OUT_DIR / f"radar_{i:02d}.png"
-              plt.savefig(out_png, bbox_inches="tight", pad_inches=0)
+              fig.savefig(out_png, dpi=DPI)
               plt.close(fig)
 
-              print(f"Saved {out_png}")
-
-          print("All frames complete.")
+          print("Frames complete.")
           EOF
 
       - name: Upload images as artifact
