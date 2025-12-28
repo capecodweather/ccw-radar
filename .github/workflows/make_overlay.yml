@@ -29,7 +29,7 @@ jobs:
           import cartopy.crs as ccrs
           import matplotlib as mpl
           from matplotlib.patches import Rectangle
-          import pyart  # <-- THIS REGISTERS NWSRef
+          import pyart  # registers NWSRef into matplotlib
 
           # ---------------- CONFIG ---------------- #
           RADAR_LAT = 41.955
@@ -97,7 +97,7 @@ jobs:
               panel_height - 0.10
           ])
 
-          cmap = pyart.graph.cm.NWSRef
+          cmap = plt.get_cmap("NWSRef")
           norm = mpl.colors.Normalize(vmin=DBZ_MIN, vmax=DBZ_MAX)
 
           cb = mpl.colorbar.ColorbarBase(
