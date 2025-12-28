@@ -1,3 +1,26 @@
+name: Generate latest 12 KBOX reflectivity images
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  kbox:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy matplotlib arm_pyart requests
+
       - name: Fetch latest 12 KBOX files and plot reflectivity
         run: |
           python << 'EOF'
@@ -27,7 +50,6 @@
                   e.text for e in root.findall("s3:Contents/s3:Key", ns)
               ]
 
-          # --- Determine dates (UTC) ---
           today = datetime.utcnow().date()
           yesterday = today - timedelta(days=1)
 
@@ -43,8 +65,6 @@
               except Exception as e:
                   print(f"Warning: could not list {p}: {e}")
 
-          keys = [k for k in keys if k.startswith(tuple(prefixes))]
-
           if len(keys) < MAX_FILES:
               raise RuntimeError(f"Only found {len(keys)} radar files")
 
@@ -58,14 +78,12 @@
               url = f"{BASE_URL}/{key}"
               local_file = OUT_DIR / f"radar_{i:02d}"
 
-              # Download
               with requests.get(url, stream=True, timeout=60) as r:
                   r.raise_for_status()
                   with open(local_file, "wb") as f:
                       for chunk in r.iter_content(8192):
                           f.write(chunk)
 
-              # Read radar
               radar = pyart.io.read_nexrad_archive(local_file)
 
               sweep = 0
@@ -92,3 +110,9 @@
 
           print("Done.")
           EOF
+
+      - name: Upload images as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kbox-latest-12
+          path: output/*.png
