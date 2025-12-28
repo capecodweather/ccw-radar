@@ -129,7 +129,8 @@ jobs:
                   x, y, refl,
                   cmap=cmap,
                   norm=norm,
-                  shading="auto"
+                  shading="auto",
+                  zorder="1"
               )
 
               ax.imshow(
@@ -138,7 +139,8 @@ jobs:
                       -MAX_RANGE_KM, MAX_RANGE_KM,
                       -MAX_RANGE_KM, MAX_RANGE_KM
                   ],
-                  interpolation="nearest"
+                  interpolation="nearest",
+                  zorder="10"
               )
 
               ax.set_xlim(-MAX_RANGE_KM, MAX_RANGE_KM)
