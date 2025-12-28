@@ -49,7 +49,7 @@ jobs:
           OUT_DIR = Path("output")
           OUT_DIR.mkdir(exist_ok=True)
 
-          OVERLAY_PATH = Path("overlays/sne_states.png")
+          OVERLAY_PATH = Path("overlays/sne_states_with_dbz.png")
           # ---------------------------------------- #
 
           overlay = Image.open(OVERLAY_PATH).convert("RGBA")
