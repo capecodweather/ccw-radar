@@ -1,167 +1,380 @@
-name: Generate latest 12 KBOX reflectivity images (HQ + embedded dBZ scale)
+#!/usr/bin/env python3
+"""
+KBOX Level II radar -> 12 latest reflectivity PNG frames (1600x1600),
+with a static overlay PNG and baked-in branding + Eastern Time validity stamp.
 
-on:
-  workflow_dispatch: {}
+Outputs:
+  output/radar_00.png ... output/radar_11.png
 
-jobs:
-  radar:
-    runs-on: ubuntu-latest
+Overlay:
+  overlays/sne_states_with_dbz.png
+  (static image drawn over the plot using ax.transAxes)
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+Notes:
+- Reflectivity colormap: NWSRef
+- Fixed normalization: 0–75 dBZ
+- No colorbar generated in code (overlay already contains one)
+- Uses radar scan time (last ray time) converted to US/Eastern
+"""
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+from __future__ import annotations
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install numpy matplotlib arm_pyart requests pillow
+import datetime as dt
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+from typing import List, Tuple
+import xml.etree.ElementTree as ET
 
-      - name: Fetch latest 12 KBOX scans and render images
-        run: |
-          python << 'EOF'
-          import requests
-          import xml.etree.ElementTree as ET
-          import pyart                      # registers NWS colormaps
-          import numpy as np
-          import matplotlib.pyplot as plt
-          import matplotlib as mpl
-          from pathlib import Path
-          from datetime import datetime, timedelta
-          from PIL import Image
+import numpy as np
+import requests
 
-          # ---------------- CONFIG ---------------- #
-          RADAR = "KBOX"
-          BASE_URL = "https://unidata-nexrad-level2.s3.amazonaws.com"
-          MAX_FRAMES = 12
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 
-          IMAGE_PX = 1600
-          DPI = 100
-          MAX_RANGE_KM = 230.0
+from zoneinfo import ZoneInfo
 
-          # MUST match overlay colorbar
-          DBZ_MIN = 0
-          DBZ_MAX = 75
+import pyart
+from netCDF4 import num2date
 
-          OUT_DIR = Path("output")
-          OUT_DIR.mkdir(exist_ok=True)
+import cartopy.crs as ccrs  # required by Py-ART map display
 
-          OVERLAY_PATH = Path("overlays/sne_states_with_dbz.png")
-          # ---------------------------------------- #
 
-          # Explicitly resolve NWS reflectivity colormap + normalization
-          cmap = plt.get_cmap("NWSRef")
-          norm = mpl.colors.Normalize(vmin=DBZ_MIN, vmax=DBZ_MAX)
+# ------------------------------ CONFIG ------------------------------ #
 
-          # Load overlay (already contains outlines + dBZ scale)
-          overlay = Image.open(OVERLAY_PATH).convert("RGBA")
-          overlay = overlay.resize((IMAGE_PX, IMAGE_PX), Image.LANCZOS)
+SITE = "KBOX"
+BUCKET_BASE = "https://unidata-nexrad-level2.s3.amazonaws.com"
+# extents tuned for Southern New England / Cape Cod visibility
+EXTENT = {
+    "min_lon": -74.6,
+    "max_lon": -69.0,
+    "min_lat": 40.2,
+    "max_lat": 43.3,
+}
 
-          ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+# Output sizing
+OUT_DIR = Path("output")
+OUT_W = 1600
+OUT_H = 1600
+DPI = 200
+FIGSIZE_IN = (OUT_W / DPI, OUT_H / DPI)  # 8x8 at 200 dpi -> 1600x1600
 
-          def list_keys(prefix):
-              url = f"{BASE_URL}/?prefix={prefix}"
-              r = requests.get(url, timeout=30)
-              r.raise_for_status()
-              root = ET.fromstring(r.text)
-              return [
-                  e.text for e in root.findall("s3:Contents/s3:Key", ns)
-              ]
+# Overlay PNG (drawn ON TOP of radar)
+OVERLAY_PATH = Path("overlays") / "sne_states_with_dbz.png"
 
-          today = datetime.utcnow().date()
-          yesterday = today - timedelta(days=1)
+# Plot settings
+FIELD = "reflectivity"
+VMIN = 0.0
+VMAX = 75.0
+CMAP = "pyart_NWSRef"  # NWSRef colormap name in Py-ART
 
-          prefixes = [
-              f"{today:%Y/%m/%d}/{RADAR}/",
-              f"{yesterday:%Y/%m/%d}/{RADAR}/",
-          ]
+# Branding text
+BRAND_LINE1 = "KBOX Local Radar"
+BRAND_LINE2 = "CapeCodWeather.net"
 
-          keys = []
-          for p in prefixes:
-              try:
-                  for k in list_keys(p):
-                      if "_MDM" in k:
-                          continue
-                      if k.endswith("_V06") or k.endswith("_V07"):
-                          keys.append(k)
-              except Exception as e:
-                  print(f"Warning listing {p}: {e}")
+TZ_LOCAL = ZoneInfo("America/New_York")  # Eastern Time with EST/EDT
 
-          if len(keys) < MAX_FRAMES:
-              raise RuntimeError(f"Only found {len(keys)} radar scans")
 
-          latest = sorted(keys)[-MAX_FRAMES:]
+# ------------------------------ HELPERS ------------------------------ #
 
-          print("Rendering frames:")
-          for k in latest:
-              print(" ", k)
+def utc_today_path() -> str:
+    """Return YYYY/MM/DD/SITE/ for today's UTC date."""
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    return f"{now_utc:%Y/%m/%d}/{SITE}/"
 
-          for i, key in enumerate(latest):
-              url = f"{BASE_URL}/{key}"
-              local_file = OUT_DIR / f"scan_{i:02d}"
 
-              with requests.get(url, stream=True, timeout=60) as r:
-                  r.raise_for_status()
-                  with open(local_file, "wb") as f:
-                      for chunk in r.iter_content(8192):
-                          f.write(chunk)
+def list_s3_keys(prefix: str) -> List[str]:
+    """
+    List keys under the public S3 bucket prefix using XML listing.
+    Uses delimiter-less listing and handles pagination via IsTruncated/NextMarker.
+    """
+    keys: List[str] = []
+    marker = None
 
-              radar = pyart.io.read_nexrad_archive(local_file)
+    while True:
+        params = {"prefix": prefix}
+        if marker:
+            params["marker"] = marker
 
-              slc = radar.get_slice(0)
-              refl = radar.fields["reflectivity"]["data"][slc]
-              az = np.deg2rad(radar.azimuth["data"][slc])
-              r_km = radar.range["data"] / 1000.0
+        r = requests.get(BUCKET_BASE, params=params, timeout=30)
+        r.raise_for_status()
 
-              x = np.outer(np.sin(az), r_km)
-              y = np.outer(np.cos(az), r_km)
+        root = ET.fromstring(r.text)
 
-              fig, ax = plt.subplots(
-                  figsize=(IMAGE_PX / DPI, IMAGE_PX / DPI),
-                  dpi=DPI
-              )
+        # S3 list bucket XML includes namespace sometimes; be namespace-agnostic
+        def findall(tag: str):
+            return root.findall(f".//{{*}}{tag}")
 
-              # ---- CRITICAL: force numeric z-order everywhere ----
-              ax.set_zorder(0)
+        for c in findall("Contents"):
+            k = c.findtext("{*}Key")
+            if k:
+                keys.append(k)
 
-              mesh = ax.pcolormesh(
-                  x, y, refl,
-                  cmap=cmap,
-                  norm=norm,
-                  shading="auto",
-                  zorder=1
-              )
+        is_truncated_text = root.findtext(".//{*}IsTruncated")
+        is_truncated = (is_truncated_text or "").strip().lower() == "true"
 
-              ax.imshow(
-                  overlay,
-                  extent=[
-                      -MAX_RANGE_KM, MAX_RANGE_KM,
-                      -MAX_RANGE_KM, MAX_RANGE_KM
-                  ],
-                  interpolation="nearest",
-                  zorder=10
-              )
+        if not is_truncated:
+            break
 
-              ax.set_xlim(-MAX_RANGE_KM, MAX_RANGE_KM)
-              ax.set_ylim(-MAX_RANGE_KM, MAX_RANGE_KM)
-              ax.set_aspect("equal")
-              ax.axis("off")
+        next_marker = root.findtext(".//{*}NextMarker")
+        if next_marker:
+            marker = next_marker
+        else:
+            # fallback: use last key as marker
+            marker = keys[-1] if keys else None
+            if not marker:
+                break
 
-              out_png = OUT_DIR / f"radar_{i:02d}.png"
-              fig.savefig(out_png, dpi=DPI)
-              plt.close(fig)
+    return keys
 
-              print(f"Saved {out_png}")
 
-          print("All frames complete.")
-          EOF
+_TS_RE = re.compile(r"(\d{8})_(\d{6})")
 
-      - name: Upload images as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kbox_latest_12
-          path: output/radar_*.png
+
+def key_timestamp_utc(key: str) -> dt.datetime | None:
+    """
+    Extract UTC timestamp from typical Level II key names containing YYYYMMDD_HHMMSS.
+    Returns None if pattern not found.
+    """
+    m = _TS_RE.search(key)
+    if not m:
+        return None
+    ymd, hms = m.group(1), m.group(2)
+    try:
+        return dt.datetime.strptime(ymd + hms, "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+def filter_level2_keys(keys: List[str], prefix: str) -> List[Tuple[str, dt.datetime]]:
+    """
+    Filter keys likely to be Level II archive files (not directories).
+    Sort by embedded timestamp when possible; otherwise drop.
+    """
+    items: List[Tuple[str, dt.datetime]] = []
+    for k in keys:
+        if not k.startswith(prefix):
+            continue
+        if k.endswith("/"):
+            continue
+
+        ts = key_timestamp_utc(k)
+        if ts is None:
+            continue
+
+        # Basic guard against non-Level-II-like artifacts:
+        # Level II archive names typically start with site and contain _V0x
+        # but we don't hard-require _V0x to keep it robust.
+        if f"/{SITE}" not in k:
+            continue
+
+        items.append((k, ts))
+
+    items.sort(key=lambda x: x[1])
+    return items
+
+
+def download_key_to_tmp(key: str, tmpdir: Path) -> Path:
+    url = f"{BUCKET_BASE}/{key}"
+    local = tmpdir / Path(key).name
+    with requests.get(url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        with open(local, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+    return local
+
+
+def radar_valid_time_local(radar) -> str:
+    """
+    Compute validity time from the radar object time array.
+    Uses the last ray time as the 'valid' time (common practice).
+    Returns a formatted string like: 'Valid: Dec 28, 2025 • 5:54 PM EST'
+    """
+    # radar.time units like "seconds since 2025-12-28T00:00:00Z"
+    tdata = radar.time["data"]
+    units = radar.time["units"]
+
+    # last ray time
+    t_last = float(tdata[-1])
+
+    dt_utc = num2date(t_last, units)
+    # num2date may return naive or aware; normalize to aware UTC
+    if getattr(dt_utc, "tzinfo", None) is None:
+        dt_utc = dt_utc.replace(tzinfo=dt.timezone.utc)
+    else:
+        dt_utc = dt_utc.astimezone(dt.timezone.utc)
+
+    dt_local = dt_utc.astimezone(TZ_LOCAL)
+    tzabbr = dt_local.tzname() or "ET"
+
+    # cross-platform formatting (avoid %-I)
+    month = dt_local.strftime("%b")
+    day = dt_local.day
+    year = dt_local.year
+    hour12 = dt_local.strftime("%I").lstrip("0") or "12"
+    minute = dt_local.strftime("%M")
+    ampm = dt_local.strftime("%p")
+
+    return f"Valid: {month} {day}, {year} • {hour12}:{minute} {ampm} {tzabbr}"
+
+
+def add_text_branding(ax, valid_line: str) -> None:
+    """
+    Add branding + timestamp text with a subtle black outline for readability.
+    """
+    outline = [pe.withStroke(linewidth=3, foreground="black", alpha=0.85)]
+
+    # Top-left branding
+    ax.text(
+        0.02, 0.98,
+        f"{BRAND_LINE1}\n{BRAND_LINE2}",
+        transform=ax.transAxes,
+        ha="left", va="top",
+        color="white",
+        fontsize=18,
+        fontweight="bold",
+        path_effects=outline,
+        zorder=20,
+    )
+
+    # Bottom-right validity
+    ax.text(
+        0.98, 0.02,
+        valid_line,
+        transform=ax.transAxes,
+        ha="right", va="bottom",
+        color="white",
+        fontsize=16,
+        path_effects=outline,
+        zorder=20,
+    )
+
+
+def render_reflectivity_png(level2_path: Path, out_path: Path) -> None:
+    """
+    Render reflectivity from a Level II file to a 1600x1600 PNG,
+    using fixed dBZ scaling and overlay PNG.
+    """
+    radar = pyart.io.read_nexrad_archive(str(level2_path))
+
+    # Ensure reflectivity exists
+    if FIELD not in radar.fields:
+        raise RuntimeError(f"Field '{FIELD}' not found in {level2_path.name}. Available: {list(radar.fields.keys())}")
+
+    valid_line = radar_valid_time_local(radar)
+
+    # Map projection setup
+    projection = ccrs.Mercator()
+
+    fig = plt.figure(figsize=FIGSIZE_IN, dpi=DPI)
+    fig.patch.set_facecolor("black")
+
+    ax = plt.axes(projection=projection)
+    ax.set_facecolor("black")
+
+    # IMPORTANT: zorder stability fix
+    ax.set_zorder(0)
+
+    display = pyart.graph.RadarMapDisplay(radar)
+
+    # Plot radar reflectivity (no colorbar, no title)
+    display.plot_ppi_map(
+        FIELD,
+        sweep=0,
+        vmin=VMIN,
+        vmax=VMAX,
+        cmap=CMAP,
+        projection=projection,
+        ax=ax,
+        colorbar_flag=False,
+        title_flag=False,
+        min_lon=EXTENT["min_lon"],
+        max_lon=EXTENT["max_lon"],
+        min_lat=EXTENT["min_lat"],
+        max_lat=EXTENT["max_lat"],
+        lat_lines=None,
+        lon_lines=None,
+        resolution="10m",
+    )
+
+    # Try to force the main mesh zorder (Py-ART returns None; grab last collection)
+    if ax.collections:
+        try:
+            ax.collections[-1].set_zorder(1)
+        except Exception:
+            pass
+
+    # Remove axes clutter
+    try:
+        ax.outline_patch.set_visible(False)
+    except Exception:
+        pass
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    # Overlay PNG drawn in axes coordinates (covers full axes)
+    if not OVERLAY_PATH.exists():
+        raise FileNotFoundError(f"Overlay not found: {OVERLAY_PATH}. Put your overlay PNG there.")
+    overlay = plt.imread(str(OVERLAY_PATH))
+    ax.imshow(
+        overlay,
+        origin="upper",
+        transform=ax.transAxes,
+        extent=(0, 1, 0, 1),
+        zorder=10,
+    )
+
+    # Branding + timestamp
+    add_text_branding(ax, valid_line)
+
+    # Tight, loop-safe export
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(str(out_path), dpi=DPI, bbox_inches="tight", pad_inches=0, facecolor=fig.get_facecolor())
+    plt.close(fig)
+
+
+def main() -> int:
+    prefix = utc_today_path()
+    print(f"[INFO] Listing keys for prefix: {prefix}")
+
+    keys = list_s3_keys(prefix)
+    items = filter_level2_keys(keys, prefix)
+
+    if len(items) < 12:
+        raise RuntimeError(f"Found only {len(items)} timestamped Level-II-like keys for {prefix}. Cannot build 12 frames.")
+
+    latest_12 = items[-12:]  # sorted ascending
+    # We want radar_00 oldest ... radar_11 newest for smooth time progression
+    latest_12_keys = [k for (k, _ts) in latest_12]
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmpdir = Path(td)
+
+        for idx, key in enumerate(latest_12_keys):
+            frame_name = f"radar_{idx:02d}.png"
+            out_path = OUT_DIR / frame_name
+
+            print(f"[INFO] ({idx+1}/12) Downloading: {key}")
+            local = download_key_to_tmp(key, tmpdir)
+
+            print(f"[INFO] Rendering: {frame_name}")
+            render_reflectivity_png(local, out_path)
+
+    print("[OK] Wrote 12 frames to output/")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        raise
