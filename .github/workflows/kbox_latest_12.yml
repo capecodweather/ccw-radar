@@ -26,7 +26,7 @@ jobs:
           python << 'EOF'
           import requests
           import xml.etree.ElementTree as ET
-          import pyart                    # IMPORTANT: registers NWS colormaps
+          import pyart                      # registers NWS colormaps
           import numpy as np
           import matplotlib.pyplot as plt
           import matplotlib as mpl
@@ -53,11 +53,11 @@ jobs:
           OVERLAY_PATH = Path("overlays/sne_states_with_dbz.png")
           # ---------------------------------------- #
 
-          # Explicitly resolve NWS reflectivity colormap
+          # Explicitly resolve NWS reflectivity colormap + normalization
           cmap = plt.get_cmap("NWSRef")
           norm = mpl.colors.Normalize(vmin=DBZ_MIN, vmax=DBZ_MAX)
 
-          # Load overlay (already contains outlines + colorbar)
+          # Load overlay (already contains outlines + dBZ scale)
           overlay = Image.open(OVERLAY_PATH).convert("RGBA")
           overlay = overlay.resize((IMAGE_PX, IMAGE_PX), Image.LANCZOS)
 
@@ -125,12 +125,15 @@ jobs:
                   dpi=DPI
               )
 
+              # ---- CRITICAL: force numeric z-order everywhere ----
+              ax.set_zorder(0)
+
               mesh = ax.pcolormesh(
                   x, y, refl,
                   cmap=cmap,
                   norm=norm,
                   shading="auto",
-                  zorder="1"
+                  zorder=1
               )
 
               ax.imshow(
@@ -140,7 +143,7 @@ jobs:
                       -MAX_RANGE_KM, MAX_RANGE_KM
                   ],
                   interpolation="nearest",
-                  zorder="10"
+                  zorder=10
               )
 
               ax.set_xlim(-MAX_RANGE_KM, MAX_RANGE_KM)
