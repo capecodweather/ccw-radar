@@ -61,12 +61,16 @@ jobs:
           keys = []
           for p in prefixes:
               try:
-                  keys.extend(list_keys(p))
+                  for k in list_keys(p):
+                      if "_MDM" in k:
+                          continue
+                      if k.endswith("_V06") or k.endswith("_V07"):
+                          keys.append(k)
               except Exception as e:
                   print(f"Warning: could not list {p}: {e}")
 
           if len(keys) < MAX_FILES:
-              raise RuntimeError(f"Only found {len(keys)} radar files")
+              raise RuntimeError(f"Only found {len(keys)} valid radar files")
 
           latest_keys = sorted(keys)[-MAX_FILES:]
 
