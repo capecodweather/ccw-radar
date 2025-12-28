@@ -26,9 +26,10 @@ jobs:
           python << 'EOF'
           import requests
           import xml.etree.ElementTree as ET
-          import pyart
+          import pyart                    # IMPORTANT: registers NWS colormaps
           import numpy as np
           import matplotlib.pyplot as plt
+          import matplotlib as mpl
           from pathlib import Path
           from datetime import datetime, timedelta
           from PIL import Image
@@ -42,13 +43,21 @@ jobs:
           DPI = 100
           MAX_RANGE_KM = 230.0
 
+          # MUST match overlay colorbar
+          DBZ_MIN = 0
+          DBZ_MAX = 75
+
           OUT_DIR = Path("output")
           OUT_DIR.mkdir(exist_ok=True)
 
           OVERLAY_PATH = Path("overlays/sne_states_with_dbz.png")
           # ---------------------------------------- #
 
-          # Load overlay (already contains outlines + dBZ scale)
+          # Explicitly resolve NWS reflectivity colormap
+          cmap = plt.get_cmap("NWSRef")
+          norm = mpl.colors.Normalize(vmin=DBZ_MIN, vmax=DBZ_MAX)
+
+          # Load overlay (already contains outlines + colorbar)
           overlay = Image.open(OVERLAY_PATH).convert("RGBA")
           overlay = overlay.resize((IMAGE_PX, IMAGE_PX), Image.LANCZOS)
 
@@ -118,7 +127,8 @@ jobs:
 
               ax.pcolormesh(
                   x, y, refl,
-                  cmap="NWSRef",
+                  cmap=cmap,
+                  norm=norm,
                   shading="auto"
               )
 
