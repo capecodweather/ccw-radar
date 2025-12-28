@@ -125,7 +125,7 @@ jobs:
                   dpi=DPI
               )
 
-              ax.pcolormesh(
+              mesh = ax.pcolormesh(
                   x, y, refl,
                   cmap=cmap,
                   norm=norm,
