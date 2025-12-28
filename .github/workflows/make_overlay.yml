@@ -1,4 +1,4 @@
-name: Generate SNE overlay with state outlines + dBZ colorbar
+name: Generate SNE overlay with state outlines + NWS dBZ colorbar
 
 on:
   workflow_dispatch: {}
@@ -19,9 +19,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install matplotlib cartopy shapely pyproj
+          pip install matplotlib cartopy shapely pyproj arm_pyart
 
-      - name: Generate overlay with embedded colorbar
+      - name: Generate overlay with embedded NWS dBZ colorbar
         run: |
           python << 'EOF'
           import matplotlib.pyplot as plt
@@ -29,6 +29,7 @@ jobs:
           import cartopy.crs as ccrs
           import matplotlib as mpl
           from matplotlib.patches import Rectangle
+          import pyart  # <-- THIS REGISTERS NWSRef
 
           # ---------------- CONFIG ---------------- #
           RADAR_LAT = 41.955
@@ -56,7 +57,7 @@ jobs:
               crs=proj
           )
 
-          # Draw state outlines
+          # ---- STATE OUTLINES ----
           ax.add_feature(
               cfeature.STATES.with_scale("10m"),
               linewidth=1.0,
@@ -69,7 +70,7 @@ jobs:
           fig.patch.set_alpha(0)
           ax.patch.set_alpha(0)
 
-          # ---- COLORBAR PANEL (axes fraction) ----
+          # ---- COLORBAR PANEL ----
           panel_left = 0.86
           panel_width = 0.12
           panel_bottom = 0.08
@@ -88,7 +89,7 @@ jobs:
               )
           )
 
-          # ---- COLORBAR ITSELF ----
+          # ---- NWS REFLECTIVITY COLORBAR ----
           cax = fig.add_axes([
               panel_left + 0.04,
               panel_bottom + 0.05,
@@ -96,7 +97,7 @@ jobs:
               panel_height - 0.10
           ])
 
-          cmap = mpl.cm.get_cmap("NWSRef")
+          cmap = pyart.graph.cm.NWSRef
           norm = mpl.colors.Normalize(vmin=DBZ_MIN, vmax=DBZ_MAX)
 
           cb = mpl.colorbar.ColorbarBase(
