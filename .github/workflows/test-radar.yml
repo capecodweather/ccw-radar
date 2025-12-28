@@ -100,14 +100,14 @@ jobs:
               x = np.outer(np.sin(az), r_km)
               y = np.outer(np.cos(az), r_km)
 
-              plt.figure(figsize=(6, 6))
+              plt.figure(figsize=(12, 12))
               plt.pcolormesh(x, y, refl, cmap="NWSRef", shading="auto")
               plt.axis("equal")
               plt.axis("off")
               plt.title(f"KBOX Reflectivity ({key[-15:]})")
 
               out_png = OUT_DIR / f"kbox_{i:02d}.png"
-              plt.savefig(out_png, dpi=150, bbox_inches="tight")
+              plt.savefig(out_png, dpi=250, bbox_inches="tight")
               plt.close()
 
               print(f"Saved {out_png}")
