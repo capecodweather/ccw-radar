@@ -1,0 +1,81 @@
+name: Generate Southern New England state overlay
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  overlay:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Cartopy and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install matplotlib cartopy shapely pyproj
+
+      - name: Generate state outline overlay (KBOX-centric)
+        run: |
+          python << 'EOF'
+          import matplotlib.pyplot as plt
+          import cartopy.feature as cfeature
+          import cartopy.crs as ccrs
+
+          # -------- CONFIG -------- #
+          RADAR_LAT = 41.955    # KBOX
+          RADAR_LON = -71.137
+          MAX_RANGE_KM = 230.0
+
+          IMAGE_SIZE = 1200     # pixels
+          DPI = 100
+          # ------------------------ #
+
+          proj = ccrs.AzimuthalEquidistant(
+              central_longitude=RADAR_LON,
+              central_latitude=RADAR_LAT
+          )
+
+          fig = plt.figure(figsize=(IMAGE_SIZE / DPI, IMAGE_SIZE / DPI), dpi=DPI)
+          ax = plt.axes(projection=proj)
+
+          extent_m = MAX_RANGE_KM * 1000
+          ax.set_extent(
+              [-extent_m, extent_m, -extent_m, extent_m],
+              crs=proj
+          )
+
+          ax.add_feature(
+              cfeature.STATES.with_scale("10m"),
+              edgecolor="black",
+              linewidth=1.0,
+              facecolor="none"
+          )
+
+          ax.axis("off")
+          fig.patch.set_alpha(0)
+          ax.patch.set_alpha(0)
+
+          plt.savefig(
+              "sne_states.png",
+              dpi=DPI,
+              transparent=True,
+              bbox_inches="tight",
+              pad_inches=0
+          )
+
+          plt.close()
+          print("Overlay saved: sne_states.png")
+          EOF
+
+      - name: Upload overlay as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sne-states-overlay
+          path: sne_states.png
