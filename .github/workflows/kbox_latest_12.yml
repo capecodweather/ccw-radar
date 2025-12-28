@@ -1,4 +1,4 @@
-name: Generate latest 12 KBOX reflectivity images (HQ + outlines)
+name: Generate latest 12 KBOX reflectivity images (HQ + outlines + dBZ scale)
 
 on:
   workflow_dispatch: {}
@@ -32,15 +32,19 @@ jobs:
           from pathlib import Path
           from datetime import datetime, timedelta
           from PIL import Image
+          from mpl_toolkits.axes_grid1 import make_axes_locatable
 
           # ---------------- CONFIG ---------------- #
           RADAR = "KBOX"
           BASE_URL = "https://unidata-nexrad-level2.s3.amazonaws.com"
           MAX_FRAMES = 12
 
-          IMAGE_PX = 1600          # HIGH QUALITY
+          IMAGE_PX = 1600
           DPI = 100
           MAX_RANGE_KM = 230.0
+
+          DBZ_MIN = 0
+          DBZ_MAX = 75
 
           OUT_DIR = Path("output")
           OUT_DIR.mkdir(exist_ok=True)
@@ -116,11 +120,11 @@ jobs:
                   dpi=DPI
               )
 
-              ax.pcolormesh(
+              mesh = ax.pcolormesh(
                   x, y, refl,
                   cmap="NWSRef",
-                  vmin=0,
-                  vmax=75,
+                  vmin=DBZ_MIN,
+                  vmax=DBZ_MAX,
                   shading="auto"
               )
 
@@ -137,6 +141,14 @@ jobs:
               ax.set_ylim(-MAX_RANGE_KM, MAX_RANGE_KM)
               ax.set_aspect("equal")
               ax.axis("off")
+
+              # ----- dBZ COLORBAR -----
+              divider = make_axes_locatable(ax)
+              cax = divider.append_axes("right", size="3%", pad=0.08)
+              cb = plt.colorbar(mesh, cax=cax)
+              cb.set_label("Reflectivity (dBZ)")
+              cb.ax.tick_params(labelsize=10)
+              # ------------------------
 
               out_png = OUT_DIR / f"radar_{i:02d}.png"
               plt.savefig(out_png, bbox_inches="tight", pad_inches=0)
