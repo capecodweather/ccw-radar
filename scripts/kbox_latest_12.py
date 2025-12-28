@@ -1,22 +1,3 @@
-#!/usr/bin/env python3
-"""
-KBOX Level II radar -> 12 latest reflectivity PNG frames (1600x1600),
-with a static overlay PNG and baked-in branding + Eastern Time validity stamp.
-
-Outputs:
-  output/radar_00.png ... output/radar_11.png
-
-Overlay:
-  overlays/sne_states_with_dbz.png
-  (static image drawn over the plot using ax.transAxes)
-
-Notes:
-- Reflectivity colormap: NWSRef
-- Fixed normalization: 0–75 dBZ
-- No colorbar generated in code (overlay already contains one)
-- Uses radar scan time (last ray time) converted to US/Eastern
-"""
-
 from __future__ import annotations
 
 import datetime as dt
