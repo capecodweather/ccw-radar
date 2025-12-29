@@ -119,7 +119,9 @@ def key_timestamp_utc(key: str) -> dt.datetime | None:
         return None
     ymd, hms = m.group(1), m.group(2)
     try:
-        return dt.datetime.strptime(ymd + hms, "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc)
+        return dt.datetime.strptime(
+            ymd + hms, "%Y%m%d%H%M%S"
+        ).replace(tzinfo=dt.timezone.utc)
     except ValueError:
         return None
 
@@ -158,20 +160,24 @@ def download_key_to_tmp(key: str, tmpdir: Path) -> Path:
 def radar_valid_time_local(radar) -> str:
     """
     Use the last ray time as validity time.
+    Safely converts cftime -> datetime -> Eastern Time.
+
     Returns: 'Valid: Dec 28, 2025 • 5:54 PM EST'
     """
     tdata = radar.time["data"]
     units = radar.time["units"]
     t_last = float(tdata[-1])
 
-    dt_utc = num2date(t_last, units)
+    # num2date may return cftime.datetime
+    dt_any = num2date(t_last, units)
 
-    if getattr(dt_utc, "tzinfo", None) is None:
-        dt_utc = dt_utc.replace(tzinfo=dt.timezone.utc)
-    else:
-        dt_utc = dt_utc.astimezone(dt.timezone.utc)
+    # Convert safely to POSIX timestamp
+    timestamp = dt_any.timestamp()
 
+    # Create real timezone-aware datetime
+    dt_utc = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc)
     dt_local = dt_utc.astimezone(TZ_LOCAL)
+
     tzabbr = dt_local.tzname() or "ET"
 
     month = dt_local.strftime("%b")
@@ -215,7 +221,10 @@ def render_reflectivity_png(level2_path: Path, out_path: Path) -> None:
     radar = pyart.io.read_nexrad_archive(str(level2_path))
 
     if FIELD not in radar.fields:
-        raise RuntimeError(f"Field '{FIELD}' not found in {level2_path.name}. Available: {list(radar.fields.keys())}")
+        raise RuntimeError(
+            f"Field '{FIELD}' not found in {level2_path.name}. "
+            f"Available: {list(radar.fields.keys())}"
+        )
 
     valid_line = radar_valid_time_local(radar)
 
@@ -251,24 +260,23 @@ def render_reflectivity_png(level2_path: Path, out_path: Path) -> None:
         resolution="10m",
     )
 
-    # Try to keep radar underneath overlay
     if ax.collections:
         try:
             ax.collections[-1].set_zorder(1)
         except Exception:
             pass
 
-    # Remove axes junk
     try:
         ax.outline_patch.set_visible(False)
     except Exception:
         pass
+
     ax.set_xticks([])
     ax.set_yticks([])
 
-    # Overlay PNG
     if not OVERLAY_PATH.exists():
         raise FileNotFoundError(f"Overlay not found: {OVERLAY_PATH}")
+
     overlay = plt.imread(str(OVERLAY_PATH))
     ax.imshow(
         overlay,
@@ -281,7 +289,13 @@ def render_reflectivity_png(level2_path: Path, out_path: Path) -> None:
     add_text_branding(ax, valid_line)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(str(out_path), dpi=DPI, bbox_inches="tight", pad_inches=0, facecolor=fig.get_facecolor())
+    plt.savefig(
+        str(out_path),
+        dpi=DPI,
+        bbox_inches="tight",
+        pad_inches=0,
+        facecolor=fig.get_facecolor(),
+    )
     plt.close(fig)
 
 
@@ -293,9 +307,11 @@ def main() -> int:
     items = filter_level2_keys(keys, prefix)
 
     if len(items) < 12:
-        raise RuntimeError(f"Found only {len(items)} timestamped keys for {prefix}; need 12.")
+        raise RuntimeError(
+            f"Found only {len(items)} timestamped keys for {prefix}; need 12."
+        )
 
-    latest_12 = items[-12:]  # ascending
+    latest_12 = items[-12:]
     latest_12_keys = [k for (k, _ts) in latest_12]
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -322,4 +338,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[ERROR] {e}", file=sys.stderr)
         raise
-
