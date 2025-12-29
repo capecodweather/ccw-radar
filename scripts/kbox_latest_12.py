@@ -35,7 +35,7 @@ EXTENT = {
 
 OUT_DIR = Path("output")
 DPI = 200
-FIGSIZE_IN = (8, 8)
+FIGSIZE_IN = (8, 8)  # 8x8 @ 200 dpi -> 1600x1600
 
 OVERLAY_PATH = Path("overlays") / "sne_states_with_dbz.png"
 
@@ -131,13 +131,9 @@ def download_key(key: str, tmpdir: Path) -> Path:
 
 
 def radar_valid_time_local(radar) -> str:
-    """
-    SAFELY convert radar time (cftime or datetime) to Eastern Time string.
-    """
     t_last = float(radar.time["data"][-1])
     dt_any = num2date(t_last, radar.time["units"])
 
-    # Build real Python datetime explicitly (works for cftime)
     dt_utc = dt.datetime(
         dt_any.year,
         dt_any.month,
@@ -216,12 +212,17 @@ def render_png(level2: Path, out: Path):
         max_lat=EXTENT["max_lat"],
     )
 
+    # ---- STATIC OVERLAY (Cartopy-safe) ----
+    if not OVERLAY_PATH.exists():
+        raise FileNotFoundError(f"Overlay not found: {OVERLAY_PATH}")
+
     overlay = plt.imread(OVERLAY_PATH)
-    ax.imshow(
+    fig.figimage(
         overlay,
-        transform=ax.transAxes,
-        extent=(0, 1, 0, 1),
+        xo=0,
+        yo=0,
         zorder=10,
+        origin="upper",
     )
 
     add_labels(ax, valid_line)
