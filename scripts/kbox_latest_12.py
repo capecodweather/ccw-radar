@@ -35,7 +35,7 @@ EXTENT = {
 
 OUT_DIR = Path("output")
 DPI = 200
-FIGSIZE_IN = (8, 8)  # 8x8 @ 200 dpi -> 1600x1600
+FIGSIZE_IN = (8, 8)
 
 OVERLAY_PATH = Path("overlays") / "sne_states_with_dbz.png"
 
@@ -87,6 +87,9 @@ _TS_RE = re.compile(r"(\d{8})_(\d{6})")
 
 
 def key_timestamp_utc(key: str) -> dt.datetime | None:
+    # Ignore metadata files
+    if "_MDM" in key:
+        return None
     m = _TS_RE.search(key)
     if not m:
         return None
@@ -110,6 +113,8 @@ def collect_recent_keys() -> List[Tuple[str, dt.datetime]]:
         prefix = date_prefix(day)
         print(f"[INFO] Listing keys for prefix: {prefix}")
         for k in list_s3_keys(prefix):
+            if "_V06" not in k or "_MDM" in k:
+                continue
             ts = key_timestamp_utc(k)
             if ts:
                 all_items.append((k, ts))
@@ -146,15 +151,9 @@ def radar_valid_time_local(radar) -> str:
 
     dt_local = dt_utc.astimezone(TZ_LOCAL)
 
-    month = dt_local.strftime("%b")
-    day = dt_local.day
-    year = dt_local.year
-    hour12 = dt_local.strftime("%I").lstrip("0") or "12"
-    minute = dt_local.strftime("%M")
-    ampm = dt_local.strftime("%p")
-    tzabbr = dt_local.tzname() or "ET"
-
-    return f"Valid: {month} {day}, {year} • {hour12}:{minute} {ampm} {tzabbr}"
+    return dt_local.strftime(
+        "Valid: %b %-d, %Y • %-I:%M %p %Z"
+    ).replace(" 0", " ")
 
 
 def add_labels(ax, valid_line: str):
@@ -185,7 +184,12 @@ def add_labels(ax, valid_line: str):
 
 
 def render_png(level2: Path, out: Path):
-    radar = pyart.io.read_nexrad_archive(str(level2))
+    try:
+        radar = pyart.io.read_nexrad_archive(str(level2))
+    except OSError as e:
+        print(f"[WARN] Skipping unreadable file: {level2.name} ({e})")
+        return False
+
     valid_line = radar_valid_time_local(radar)
 
     fig = plt.figure(figsize=FIGSIZE_IN, dpi=DPI)
@@ -212,18 +216,8 @@ def render_png(level2: Path, out: Path):
         max_lat=EXTENT["max_lat"],
     )
 
-    # ---- STATIC OVERLAY (Cartopy-safe) ----
-    if not OVERLAY_PATH.exists():
-        raise FileNotFoundError(f"Overlay not found: {OVERLAY_PATH}")
-
     overlay = plt.imread(OVERLAY_PATH)
-    fig.figimage(
-        overlay,
-        xo=0,
-        yo=0,
-        zorder=10,
-        origin="upper",
-    )
+    fig.figimage(overlay, xo=0, yo=0, zorder=10, origin="upper")
 
     add_labels(ax, valid_line)
 
@@ -231,27 +225,35 @@ def render_png(level2: Path, out: Path):
     plt.savefig(out, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
 
+    return True
+
 
 # ---------------- MAIN ---------------- #
 
 def main():
     items = collect_recent_keys()
 
-    if len(items) < 12:
-        raise RuntimeError(f"Only found {len(items)} total scans")
-
-    latest = items[-12:]
+    if not items:
+        raise RuntimeError("No valid Level II radar files found")
 
     OUT_DIR.mkdir(exist_ok=True)
 
+    written = 0
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        for i, (key, _) in enumerate(latest):
-            print(f"[INFO] Rendering frame {i+1}/12: {key}")
+        for key, _ in items[::-1]:  # newest first
+            if written >= 12:
+                break
+            print(f"[INFO] Processing: {key}")
             local = download_key(key, td)
-            render_png(local, OUT_DIR / f"radar_{i:02d}.png")
+            ok = render_png(local, OUT_DIR / f"radar_{11-written:02d}.png")
+            if ok:
+                written += 1
 
-    print("[OK] Generated 12 frames")
+    if written < 12:
+        raise RuntimeError(f"Only rendered {written} valid frames")
+
+    print("[OK] Generated 12 frames successfully")
 
 
 if __name__ == "__main__":
