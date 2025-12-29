@@ -35,7 +35,7 @@ EXTENT = {
 
 OUT_DIR = Path("output")
 DPI = 200
-FIGSIZE_IN = (8, 8)
+FIGSIZE_IN = (8, 8)  # 1600x1600
 
 OVERLAY_PATH = Path("overlays") / "sne_states_with_dbz.png"
 
@@ -74,8 +74,7 @@ def list_s3_keys(prefix: str) -> List[str]:
             if k:
                 keys.append(k)
 
-        truncated = root.findtext(".//{*}IsTruncated") == "true"
-        if not truncated:
+        if root.findtext(".//{*}IsTruncated") != "true":
             break
 
         marker = root.findtext(".//{*}NextMarker") or keys[-1]
@@ -87,40 +86,31 @@ _TS_RE = re.compile(r"(\d{8})_(\d{6})")
 
 
 def key_timestamp_utc(key: str) -> dt.datetime | None:
-    # Ignore metadata files
-    if "_MDM" in key:
+    if "_MDM" in key or "_V06" not in key:
         return None
     m = _TS_RE.search(key)
     if not m:
         return None
-    try:
-        return dt.datetime.strptime(
-            m.group(1) + m.group(2),
-            "%Y%m%d%H%M%S"
-        ).replace(tzinfo=dt.timezone.utc)
-    except ValueError:
-        return None
+    return dt.datetime.strptime(
+        m.group(1) + m.group(2),
+        "%Y%m%d%H%M%S"
+    ).replace(tzinfo=dt.timezone.utc)
 
 
 def collect_recent_keys() -> List[Tuple[str, dt.datetime]]:
-    now_utc = dt.datetime.now(dt.timezone.utc)
-    today = now_utc.date()
-    yesterday = today - dt.timedelta(days=1)
+    now = dt.datetime.now(dt.timezone.utc)
+    days = [now.date(), now.date() - dt.timedelta(days=1)]
 
-    all_items: List[Tuple[str, dt.datetime]] = []
-
-    for day in (today, yesterday):
-        prefix = date_prefix(day)
-        print(f"[INFO] Listing keys for prefix: {prefix}")
+    items: List[Tuple[str, dt.datetime]] = []
+    for d in days:
+        prefix = date_prefix(d)
         for k in list_s3_keys(prefix):
-            if "_V06" not in k or "_MDM" in k:
-                continue
             ts = key_timestamp_utc(k)
             if ts:
-                all_items.append((k, ts))
+                items.append((k, ts))
 
-    all_items.sort(key=lambda x: x[1])
-    return all_items
+    items.sort(key=lambda x: x[1])
+    return items
 
 
 def download_key(key: str, tmpdir: Path) -> Path:
@@ -136,38 +126,26 @@ def download_key(key: str, tmpdir: Path) -> Path:
 
 
 def radar_valid_time_local(radar) -> str:
-    t_last = float(radar.time["data"][-1])
-    dt_any = num2date(t_last, radar.time["units"])
-
+    t = num2date(radar.time["data"][-1], radar.time["units"])
     dt_utc = dt.datetime(
-        dt_any.year,
-        dt_any.month,
-        dt_any.day,
-        dt_any.hour,
-        dt_any.minute,
-        int(dt_any.second),
-        tzinfo=dt.timezone.utc,
+        t.year, t.month, t.day, t.hour, t.minute, int(t.second),
+        tzinfo=dt.timezone.utc
     )
-
     dt_local = dt_utc.astimezone(TZ_LOCAL)
-
-    return dt_local.strftime(
-        "Valid: %b %-d, %Y • %-I:%M %p %Z"
-    ).replace(" 0", " ")
+    return dt_local.strftime("Valid: %b %d, %Y • %I:%M %p %Z").replace(" 0", " ")
 
 
 def add_labels(ax, valid_line: str):
-    peff = [pe.withStroke(linewidth=3, foreground="black", alpha=0.85)]
+    stroke = [pe.withStroke(linewidth=2, foreground="black")]
 
     ax.text(
         0.02, 0.98,
         f"{BRAND_LINE1}\n{BRAND_LINE2}",
         transform=ax.transAxes,
         ha="left", va="top",
+        fontsize=12,
         color="white",
-        fontsize=18,
-        fontweight="bold",
-        path_effects=peff,
+        path_effects=stroke,
         zorder=20,
     )
 
@@ -176,9 +154,9 @@ def add_labels(ax, valid_line: str):
         valid_line,
         transform=ax.transAxes,
         ha="right", va="bottom",
+        fontsize=10,
         color="white",
-        fontsize=16,
-        path_effects=peff,
+        path_effects=stroke,
         zorder=20,
     )
 
@@ -186,18 +164,17 @@ def add_labels(ax, valid_line: str):
 def render_png(level2: Path, out: Path):
     try:
         radar = pyart.io.read_nexrad_archive(str(level2))
-    except OSError as e:
-        print(f"[WARN] Skipping unreadable file: {level2.name} ({e})")
+    except OSError:
         return False
 
-    valid_line = radar_valid_time_local(radar)
-
     fig = plt.figure(figsize=FIGSIZE_IN, dpi=DPI)
-    fig.patch.set_facecolor("black")
-
     ax = plt.axes(projection=ccrs.Mercator())
-    ax.set_facecolor("black")
-    ax.set_zorder(0)
+    ax.set_extent(
+        [EXTENT["min_lon"], EXTENT["max_lon"],
+         EXTENT["min_lat"], EXTENT["max_lat"]],
+        crs=ccrs.PlateCarree()
+    )
+    ax.axis("off")
 
     display = pyart.graph.RadarMapDisplay(radar)
     display.plot_ppi_map(
@@ -210,21 +187,26 @@ def render_png(level2: Path, out: Path):
         projection=ccrs.Mercator(),
         colorbar_flag=False,
         title_flag=False,
-        min_lon=EXTENT["min_lon"],
-        max_lon=EXTENT["max_lon"],
-        min_lat=EXTENT["min_lat"],
-        max_lat=EXTENT["max_lat"],
+        lat_lines=None,
+        lon_lines=None,
     )
 
     overlay = plt.imread(OVERLAY_PATH)
-    fig.figimage(overlay, xo=0, yo=0, zorder=10, origin="upper")
+    ax.imshow(
+        overlay,
+        transform=ccrs.PlateCarree(),
+        extent=(
+            EXTENT["min_lon"], EXTENT["max_lon"],
+            EXTENT["min_lat"], EXTENT["max_lat"],
+        ),
+        zorder=10,
+    )
 
-    add_labels(ax, valid_line)
+    add_labels(ax, radar_valid_time_local(radar))
 
     out.parent.mkdir(exist_ok=True)
     plt.savefig(out, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
-
     return True
 
 
@@ -232,28 +214,22 @@ def render_png(level2: Path, out: Path):
 
 def main():
     items = collect_recent_keys()
-
-    if not items:
-        raise RuntimeError("No valid Level II radar files found")
-
     OUT_DIR.mkdir(exist_ok=True)
 
     written = 0
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        for key, _ in items[::-1]:  # newest first
-            if written >= 12:
+        for key, _ in reversed(items):
+            if written == 12:
                 break
-            print(f"[INFO] Processing: {key}")
             local = download_key(key, td)
-            ok = render_png(local, OUT_DIR / f"radar_{11-written:02d}.png")
-            if ok:
+            if render_png(local, OUT_DIR / f"radar_{11-written:02d}.png"):
                 written += 1
 
     if written < 12:
-        raise RuntimeError(f"Only rendered {written} valid frames")
+        raise RuntimeError("Could not generate 12 frames")
 
-    print("[OK] Generated 12 frames successfully")
+    print("[OK] Generated 12 aligned frames")
 
 
 if __name__ == "__main__":
