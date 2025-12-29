@@ -18,7 +18,6 @@ from zoneinfo import ZoneInfo
 
 import pyart
 from netCDF4 import num2date
-import cartopy.crs as ccrs
 
 
 # ---------------- CONFIG ---------------- #
@@ -26,16 +25,9 @@ import cartopy.crs as ccrs
 SITE = "KBOX"
 BUCKET_BASE = "https://unidata-nexrad-level2.s3.amazonaws.com"
 
-EXTENT = {
-    "min_lon": -74.6,
-    "max_lon": -69.0,
-    "min_lat": 40.2,
-    "max_lat": 43.3,
-}
-
 OUT_DIR = Path("output")
 DPI = 200
-FIGSIZE_IN = (8, 8)  # 1600x1600
+FIGSIZE_IN = (8, 8)   # 1600x1600
 
 OVERLAY_PATH = Path("overlays") / "sne_states_with_dbz.png"
 
@@ -56,7 +48,7 @@ def date_prefix(date: dt.date) -> str:
     return f"{date:%Y/%m/%d}/{SITE}/"
 
 
-def list_s3_keys(prefix: str) -> List[str]:
+def list_s3_keys(prefix: str) -> list[str]:
     keys = []
     marker = None
 
@@ -101,10 +93,9 @@ def collect_recent_keys() -> List[Tuple[str, dt.datetime]]:
     now = dt.datetime.now(dt.timezone.utc)
     days = [now.date(), now.date() - dt.timedelta(days=1)]
 
-    items: List[Tuple[str, dt.datetime]] = []
+    items = []
     for d in days:
-        prefix = date_prefix(d)
-        for k in list_s3_keys(prefix):
+        for k in list_s3_keys(date_prefix(d)):
             ts = key_timestamp_utc(k)
             if ts:
                 items.append((k, ts))
@@ -131,8 +122,9 @@ def radar_valid_time_local(radar) -> str:
         t.year, t.month, t.day, t.hour, t.minute, int(t.second),
         tzinfo=dt.timezone.utc
     )
-    dt_local = dt_utc.astimezone(TZ_LOCAL)
-    return dt_local.strftime("Valid: %b %d, %Y • %I:%M %p %Z").replace(" 0", " ")
+    return dt_utc.astimezone(TZ_LOCAL).strftime(
+        "Valid: %b %d, %Y • %I:%M %p %Z"
+    ).replace(" 0", " ")
 
 
 def add_labels(ax, valid_line: str):
@@ -161,46 +153,32 @@ def add_labels(ax, valid_line: str):
     )
 
 
-def render_png(level2: Path, out: Path):
+def render_png(level2: Path, out: Path) -> bool:
     try:
         radar = pyart.io.read_nexrad_archive(str(level2))
     except OSError:
         return False
 
     fig = plt.figure(figsize=FIGSIZE_IN, dpi=DPI)
-    ax = plt.axes(projection=ccrs.Mercator())
-    ax.set_extent(
-        [EXTENT["min_lon"], EXTENT["max_lon"],
-         EXTENT["min_lat"], EXTENT["max_lat"]],
-        crs=ccrs.PlateCarree()
-    )
-    ax.axis("off")
+    ax = plt.axes()
+    ax.set_axis_off()
+    ax.set_facecolor("black")
 
-    display = pyart.graph.RadarMapDisplay(radar)
-    display.plot_ppi_map(
+    display = pyart.graph.RadarDisplay(radar)
+    display.plot(
         FIELD,
-        0,
+        sweep=0,
         vmin=VMIN,
         vmax=VMAX,
         cmap=CMAP,
         ax=ax,
-        projection=ccrs.Mercator(),
         colorbar_flag=False,
         title_flag=False,
-        lat_lines=None,
-        lon_lines=None,
     )
 
+    # ---- STATIC OVERLAY (PIXEL-ALIGNED) ----
     overlay = plt.imread(OVERLAY_PATH)
-    ax.imshow(
-        overlay,
-        transform=ccrs.PlateCarree(),
-        extent=(
-            EXTENT["min_lon"], EXTENT["max_lon"],
-            EXTENT["min_lat"], EXTENT["max_lat"],
-        ),
-        zorder=10,
-    )
+    ax.imshow(overlay, zorder=10)
 
     add_labels(ax, radar_valid_time_local(radar))
 
@@ -229,7 +207,7 @@ def main():
     if written < 12:
         raise RuntimeError("Could not generate 12 frames")
 
-    print("[OK] Generated 12 aligned frames")
+    print("[OK] Generated 12 clean, aligned frames")
 
 
 if __name__ == "__main__":
