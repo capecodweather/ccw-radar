@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+"""
+KBOX Level II radar -> 12 latest reflectivity PNG frames (1600x1600),
+with static overlay and baked-in branding + Eastern Time validity stamp.
+
+Handles:
+- cftime datetime safely
+- UTC midnight rollover (today + yesterday)
+"""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -131,18 +141,34 @@ def download_key(key: str, tmpdir: Path) -> Path:
 
 
 def radar_valid_time_local(radar) -> str:
+    """
+    SAFELY convert radar time (cftime or datetime) to Eastern Time string.
+    """
     t_last = float(radar.time["data"][-1])
     dt_any = num2date(t_last, radar.time["units"])
-    ts = dt_any.timestamp()
 
-    dt_local = (
-        dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
-        .astimezone(TZ_LOCAL)
+    # Build real Python datetime explicitly (works for cftime)
+    dt_utc = dt.datetime(
+        dt_any.year,
+        dt_any.month,
+        dt_any.day,
+        dt_any.hour,
+        dt_any.minute,
+        int(dt_any.second),
+        tzinfo=dt.timezone.utc,
     )
 
-    return dt_local.strftime(
-        "Valid: %b %-d, %Y • %-I:%M %p %Z"
-    ).replace(" 0", " ")
+    dt_local = dt_utc.astimezone(TZ_LOCAL)
+
+    month = dt_local.strftime("%b")
+    day = dt_local.day
+    year = dt_local.year
+    hour12 = dt_local.strftime("%I").lstrip("0") or "12"
+    minute = dt_local.strftime("%M")
+    ampm = dt_local.strftime("%p")
+    tzabbr = dt_local.tzname() or "ET"
+
+    return f"Valid: {month} {day}, {year} • {hour12}:{minute} {ampm} {tzabbr}"
 
 
 def add_labels(ax, valid_line: str):
@@ -238,4 +264,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        raise
