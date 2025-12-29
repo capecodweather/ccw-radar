@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+"""
+KBOX Level II radar -> 12 latest reflectivity PNG frames (1600x1600)
+
+Architecture:
+- Cartopy used ONLY for radar reprojection
+- No Cartopy geography is drawn
+- Overlay PNG supplies all map graphics
+"""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -158,6 +168,12 @@ def render_png(level2: Path, out: Path) -> bool:
 
     fig = plt.figure(figsize=FIGSIZE_IN, dpi=DPI)
     ax = plt.axes(projection=ccrs.Mercator())
+    ax.set_extent(
+        [EXTENT["min_lon"], EXTENT["max_lon"],
+         EXTENT["min_lat"], EXTENT["max_lat"]],
+        crs=ccrs.PlateCarree()
+    )
+    ax.axis("off")
 
     display = pyart.graph.RadarMapDisplay(radar)
     display.plot_ppi_map(
@@ -170,24 +186,12 @@ def render_png(level2: Path, out: Path) -> bool:
         projection=ccrs.Mercator(),
         colorbar_flag=False,
         title_flag=False,
-        min_lon=EXTENT["min_lon"],
-        max_lon=EXTENT["max_lon"],
-        min_lat=EXTENT["min_lat"],
-        max_lat=EXTENT["max_lat"],
         lat_lines=None,
         lon_lines=None,
-        resolution="10m",
+        resolution=None,  # <-- CRITICAL: prevents coastlines
     )
 
-    # ---- REMOVE ALL CARTOPY GEOGRAPHY ----
-    for artist in ax.artists + ax.patches:
-        artist.set_visible(False)
-
-    ax.outline_patch.set_visible(False)
-    ax.set_xticks([])
-    ax.set_yticks([])
-
-    # ---- GEO-ALIGNED OVERLAY ----
+    # Overlay supplies all geography
     overlay = plt.imread(OVERLAY_PATH)
     ax.imshow(
         overlay,
@@ -226,7 +230,7 @@ def main():
     if written < 12:
         raise RuntimeError("Could not generate 12 frames")
 
-    print("[OK] Generated 12 correctly aligned frames")
+    print("[OK] Generated 12 stable frames")
 
 
 if __name__ == "__main__":
