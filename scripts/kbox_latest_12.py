@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 import pyart
 from netCDF4 import num2date
+import cartopy.crs as ccrs
 
 
 # ---------------- CONFIG ---------------- #
@@ -25,9 +26,16 @@ from netCDF4 import num2date
 SITE = "KBOX"
 BUCKET_BASE = "https://unidata-nexrad-level2.s3.amazonaws.com"
 
+EXTENT = {
+    "min_lon": -74.6,
+    "max_lon": -69.0,
+    "min_lat": 40.2,
+    "max_lat": 43.3,
+}
+
 OUT_DIR = Path("output")
 DPI = 200
-FIGSIZE_IN = (8, 8)   # 1600x1600
+FIGSIZE_IN = (8, 8)
 
 OVERLAY_PATH = Path("overlays") / "sne_states_with_dbz.png"
 
@@ -49,28 +57,21 @@ def date_prefix(date: dt.date) -> str:
 
 
 def list_s3_keys(prefix: str) -> list[str]:
-    keys = []
-    marker = None
-
+    keys, marker = [], None
     while True:
         params = {"prefix": prefix}
         if marker:
             params["marker"] = marker
-
         r = requests.get(BUCKET_BASE, params=params, timeout=30)
         r.raise_for_status()
         root = ET.fromstring(r.text)
-
         for c in root.findall(".//{*}Contents"):
             k = c.findtext("{*}Key")
             if k:
                 keys.append(k)
-
         if root.findtext(".//{*}IsTruncated") != "true":
             break
-
         marker = root.findtext(".//{*}NextMarker") or keys[-1]
-
     return keys
 
 
@@ -92,14 +93,12 @@ def key_timestamp_utc(key: str) -> dt.datetime | None:
 def collect_recent_keys() -> List[Tuple[str, dt.datetime]]:
     now = dt.datetime.now(dt.timezone.utc)
     days = [now.date(), now.date() - dt.timedelta(days=1)]
-
     items = []
     for d in days:
         for k in list_s3_keys(date_prefix(d)):
             ts = key_timestamp_utc(k)
             if ts:
                 items.append((k, ts))
-
     items.sort(key=lambda x: x[1])
     return items
 
@@ -129,7 +128,6 @@ def radar_valid_time_local(radar) -> str:
 
 def add_labels(ax, valid_line: str):
     stroke = [pe.withStroke(linewidth=2, foreground="black")]
-
     ax.text(
         0.02, 0.98,
         f"{BRAND_LINE1}\n{BRAND_LINE2}",
@@ -140,7 +138,6 @@ def add_labels(ax, valid_line: str):
         path_effects=stroke,
         zorder=20,
     )
-
     ax.text(
         0.98, 0.02,
         valid_line,
@@ -160,25 +157,47 @@ def render_png(level2: Path, out: Path) -> bool:
         return False
 
     fig = plt.figure(figsize=FIGSIZE_IN, dpi=DPI)
-    ax = plt.axes()
-    ax.set_axis_off()
-    ax.set_facecolor("black")
+    ax = plt.axes(projection=ccrs.Mercator())
 
-    display = pyart.graph.RadarDisplay(radar)
-    display.plot(
+    display = pyart.graph.RadarMapDisplay(radar)
+    display.plot_ppi_map(
         FIELD,
         sweep=0,
         vmin=VMIN,
         vmax=VMAX,
         cmap=CMAP,
         ax=ax,
+        projection=ccrs.Mercator(),
         colorbar_flag=False,
         title_flag=False,
+        min_lon=EXTENT["min_lon"],
+        max_lon=EXTENT["max_lon"],
+        min_lat=EXTENT["min_lat"],
+        max_lat=EXTENT["max_lat"],
+        lat_lines=None,
+        lon_lines=None,
+        resolution="10m",
     )
 
-    # ---- STATIC OVERLAY (PIXEL-ALIGNED) ----
+    # ---- REMOVE ALL CARTOPY GEOGRAPHY ----
+    for artist in ax.artists + ax.patches:
+        artist.set_visible(False)
+
+    ax.outline_patch.set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    # ---- GEO-ALIGNED OVERLAY ----
     overlay = plt.imread(OVERLAY_PATH)
-    ax.imshow(overlay, zorder=10)
+    ax.imshow(
+        overlay,
+        transform=ccrs.PlateCarree(),
+        extent=(
+            EXTENT["min_lon"], EXTENT["max_lon"],
+            EXTENT["min_lat"], EXTENT["max_lat"],
+        ),
+        zorder=10,
+    )
 
     add_labels(ax, radar_valid_time_local(radar))
 
@@ -207,12 +226,8 @@ def main():
     if written < 12:
         raise RuntimeError("Could not generate 12 frames")
 
-    print("[OK] Generated 12 clean, aligned frames")
+    print("[OK] Generated 12 correctly aligned frames")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"[ERROR] {e}", file=sys.stderr)
-        raise
+    main()
