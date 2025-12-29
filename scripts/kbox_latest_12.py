@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-KBOX Level II radar -> 12 latest reflectivity PNG frames (1600x1600),
-with static overlay and baked-in branding + Eastern Time validity stamp.
-
-Handles:
-- cftime datetime safely
-- UTC midnight rollover (today + yesterday)
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -52,7 +42,7 @@ OVERLAY_PATH = Path("overlays") / "sne_states_with_dbz.png"
 FIELD = "reflectivity"
 VMIN = 0.0
 VMAX = 75.0
-CMAP = "pyart_NWSRef"
+CMAP = "NWSRef"
 
 BRAND_LINE1 = "KBOX Local Radar"
 BRAND_LINE2 = "CapeCodWeather.net"
