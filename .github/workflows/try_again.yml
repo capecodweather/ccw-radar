@@ -1,4 +1,4 @@
-name: Generate latest 12 KBOX reflectivity images (HQ + embedded dBZ scale)
+name: Generate latest 10 KBOX reflectivity images (HQ + embedded dBZ scale)
 
 on:
   workflow_dispatch: {}
@@ -21,7 +21,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install numpy matplotlib arm_pyart requests pillow
 
-      - name: Fetch latest 12 KBOX scans and render images
+      - name: Fetch latest 10 KBOX scans and render images
         run: |
           python << 'EOF'
           import requests
@@ -39,8 +39,8 @@ jobs:
           BASE_URL = "https://unidata-nexrad-level2.s3.amazonaws.com"
           MAX_FRAMES = 12
 
-          IMAGE_PX = 1600
-          DPI = 100
+          IMAGE_PX = 2000
+          DPI = 200
           MAX_RANGE_KM = 230.0
 
           # MUST match overlay colorbar
