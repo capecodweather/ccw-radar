@@ -2,9 +2,7 @@ name: Generate latest 10 KBOX reflectivity images (HQ + embedded dBZ scale)
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: "*/5 * * * *"
-    
+
 jobs:
   radar:
     runs-on: ubuntu-latest
