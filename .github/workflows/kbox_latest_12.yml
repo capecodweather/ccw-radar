@@ -1,8 +1,6 @@
 name: KBOX Latest 12 (Reflectivity)
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
