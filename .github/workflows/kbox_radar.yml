@@ -2,8 +2,6 @@ name: Generate & Publish KBOX Radar (GitHub Pages)
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes (UTC)
 
 jobs:
   radar:
