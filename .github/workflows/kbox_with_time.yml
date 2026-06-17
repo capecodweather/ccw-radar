@@ -2,210 +2,52 @@ name: Generate & Publish KBOX Radar (GitHub Pages)
 
 on:
   workflow_dispatch: {}
-  
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kbox-radar
+  cancel-in-progress: true
+
 jobs:
   radar:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      # ---------------- CHECKOUT MAIN (CODE) ----------------
       - name: Checkout main
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # ---------------- PYTHON SETUP ----------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+          cache: pip
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy matplotlib arm_pyart requests pillow
+          python -m pip install numpy matplotlib arm_pyart requests pillow
 
-      # ---------------- GENERATE RADAR IMAGES ----------------
       - name: Generate latest KBOX radar frames
-        run: |
-          python << 'EOF'
-          import requests
-          import xml.etree.ElementTree as ET
-          import pyart
-          import numpy as np
-          import matplotlib.pyplot as plt
-          import matplotlib as mpl
-          import matplotlib.patheffects as pe
-          from pathlib import Path
-          from datetime import datetime, timedelta
-          from PIL import Image
-          import re
-          from zoneinfo import ZoneInfo
+        run: python scripts/generate_kbox_radar.py
 
-          RADAR = "KBOX"
-          BASE_URL = "https://unidata-nexrad-level2.s3.amazonaws.com"
-          MAX_FRAMES = 12
-
-          IMAGE_PX = 2400
-          DPI = 100
-          MAX_RANGE_KM = 230.0
-
-          DBZ_MIN = 0
-          DBZ_MAX = 75
-
-          WORK_DIR = Path("render")
-          WORK_DIR.mkdir(exist_ok=True)
-
-          OVERLAY_PATH = Path("overlays/sne_states_with_dbz.png")
-
-          cmap = plt.get_cmap("NWSRef")
-          norm = mpl.colors.Normalize(vmin=DBZ_MIN, vmax=DBZ_MAX)
-
-          overlay = Image.open(OVERLAY_PATH).convert("RGBA")
-          overlay = overlay.resize((IMAGE_PX, IMAGE_PX), Image.LANCZOS)
-
-          ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
-
-          def list_keys(prefix):
-              url = f"{BASE_URL}/?prefix={prefix}"
-              r = requests.get(url, timeout=30)
-              r.raise_for_status()
-              root = ET.fromstring(r.text)
-              return [e.text for e in root.findall("s3:Contents/s3:Key", ns)]
-
-          today = datetime.utcnow().date()
-          yesterday = today - timedelta(days=1)
-
-          prefixes = [
-              f"{today:%Y/%m/%d}/{RADAR}/",
-              f"{yesterday:%Y/%m/%d}/{RADAR}/",
-          ]
-
-          keys = []
-          for p in prefixes:
-              try:
-                  for k in list_keys(p):
-                      if "_MDM" in k:
-                          continue
-                      if k.endswith("_V06") or k.endswith("_V07"):
-                          keys.append(k)
-              except Exception as e:
-                  print(f"Warning listing {p}: {e}")
-
-          if len(keys) < MAX_FRAMES:
-              raise RuntimeError(f"Only found {len(keys)} radar scans")
-
-          latest = sorted(keys)[-MAX_FRAMES:]
-
-          for i, key in enumerate(latest):
-              url = f"{BASE_URL}/{key}"
-              tmp = WORK_DIR / "scan"
-
-              with requests.get(url, stream=True, timeout=60) as r:
-                  r.raise_for_status()
-                  with open(tmp, "wb") as f:
-                      for chunk in r.iter_content(8192):
-                          f.write(chunk)
-
-              radar = pyart.io.read_nexrad_archive(tmp)
-              tmp.unlink(missing_ok=True)
-
-              if "reflectivity" not in radar.fields:
-                  print(f"Skipping {key}: no reflectivity")
-                  continue
-
-              # -------- TIMESTAMP FROM FILENAME (SAFE) --------
-              m = re.search(r"(\d{8})_(\d{6})", key)
-              if m:
-                  ymd, hms = m.group(1), m.group(2)
-                  dt_utc = datetime.strptime(
-                      ymd + hms, "%Y%m%d%H%M%S"
-                  ).replace(tzinfo=ZoneInfo("UTC"))
-                  dt_et = dt_utc.astimezone(ZoneInfo("America/New_York"))
-                  timestamp_label = dt_et.strftime("%b %d, %Y %I:%M %p ET")
-              else:
-                  timestamp_label = "Time unknown"
-              # -----------------------------------------------
-
-              slc = radar.get_slice(0)
-              refl = radar.fields["reflectivity"]["data"][slc]
-              az = np.deg2rad(radar.azimuth["data"][slc])
-              r_km = radar.range["data"] / 1000.0
-
-              x = np.outer(np.sin(az), r_km)
-              y = np.outer(np.cos(az), r_km)
-
-              fig, ax = plt.subplots(
-                  figsize=(IMAGE_PX / DPI, IMAGE_PX / DPI),
-                  dpi=DPI
-              )
-
-              ax.set_zorder(0)
-
-              ax.pcolormesh(
-                  x, y, refl,
-                  cmap=cmap,
-                  norm=norm,
-                  shading="auto",
-                  zorder=1
-              )
-
-              ax.imshow(
-                  overlay,
-                  extent=[
-                      -MAX_RANGE_KM, MAX_RANGE_KM,
-                      -MAX_RANGE_KM, MAX_RANGE_KM
-                  ],
-                  interpolation="nearest",
-                  zorder=10
-              )
-
-              # -------- TIMESTAMP DRAW (SAFE) --------
-              ax.text(
-                  0.99, 0.01,
-                  timestamp_label,
-                  transform=ax.transAxes,
-                  ha="right",
-                  va="bottom",
-                  fontsize=20,
-                  color="white",
-                  path_effects=[
-                      pe.withStroke(linewidth=4, foreground="black")
-                  ],
-                  zorder=20
-              )
-              # -------------------------------------
-
-              ax.set_xlim(-MAX_RANGE_KM, MAX_RANGE_KM)
-              ax.set_ylim(-MAX_RANGE_KM, MAX_RANGE_KM)
-              ax.set_aspect("equal")
-              ax.axis("off")
-
-              out_png = WORK_DIR / f"radar_{i:02d}.png"
-              fig.savefig(out_png, dpi=DPI, bbox_inches="tight", pad_inches=0)
-              plt.close(fig)
-
-          print("Radar render complete.")
-          EOF
-
-      # ---------------- CHECKOUT gh-pages ----------------
       - name: Checkout gh-pages
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: gh-pages
 
-      # ---------------- PUBLISH IMAGES ----------------
       - name: Publish radar images
         run: |
           mkdir -p gh-pages/radar
-          rsync -av --delete render/ gh-pages/radar/
+          rsync -a --delete render/ gh-pages/radar/
 
-      # ---------------- COMMIT IF CHANGED ----------------
-      - name: Commit and push (if changed)
+      - name: Commit and push if changed
+        working-directory: gh-pages
         run: |
-          cd gh-pages
-          if git status --porcelain | grep .; then
+          if [ -n "$(git status --porcelain)" ]; then
             git config user.name "github-actions"
             git config user.email "github-actions@github.com"
             git add radar/
